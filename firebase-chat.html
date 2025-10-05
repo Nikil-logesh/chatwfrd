@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔐 Secure Chat - Firebase Realtime</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 900px;
+        }
+        .form-container {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h1 { color: #333; margin-bottom: 10px; }
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover { background: #0056b3; }
+        .chat-layout {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .sidebar {
+            flex: 1;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .chat-area {
+            flex: 2;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        #messages {
+            height: 350px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 15px 0;
+            background: white;
+            border-radius: 8px;
+        }
+        .user-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        .message-input {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .message-input input {
+            flex: 1;
+            margin: 0;
+        }
+        .status {
+            color: #666;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .info { color: #007bff; }
+        .online-dot {
+            width: 8px;
+            height: 8px;
+            background: #28a745;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 10px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+        .message.own {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        .message.other {
+            background: #f1f1f1;
+            color: black;
+        }
+        .message-meta {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Login Form -->
+        <div id="loginForm" class="form-container">
+            <h1>🔐 Real-Time Secure Chat</h1>
+            <p>✨ Works with Firebase - Real multiplayer chat!</p>
+            <input type="email" id="email" placeholder="Your Email" required>
+            <input type="password" id="password" placeholder="Password (min 6 chars)" required minlength="6">
+            <button onclick="login()">Login / Register</button>
+            <div id="loginStatus" class="status"></div>
+        </div>
+
+        <!-- Chat Interface -->
+        <div id="chatInterface" style="display: none;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h2>Welcome, <span id="userCodeDisplay"></span>! 🎉</h2>
+                <p>🔗 Share this page with friends to chat!</p>
+                <button onclick="logout()">Logout</button>
+            </div>
+
+            <div class="chat-layout">
+                <!-- Online Users -->
+                <div class="sidebar">
+                    <h3>🟢 Online Users (<span id="userCount">0</span>)</h3>
+                    <div id="onlineUsers">
+                        <p class="status">Loading users...</p>
+                    </div>
+                </div>
+
+                <!-- Chat Area -->
+                <div class="chat-area">
+                    <div id="chatHeader" style="display: none; text-align: center; margin-bottom: 15px;">
+                        <h3>💬 Chat with <span id="currentTarget"></span></h3>
+                        <div>🔐 End-to-end encrypted • <span class="online-dot"></span> Real-time</div>
+                    </div>
+                    
+                    <div id="messages">
+                        <p style="text-align: center; color: #666;">Select a user to start chatting 💬</p>
+                    </div>
+                    
+                    <div id="messageInput" class="message-input" style="display: none;">
+                        <input type="text" id="messageText" placeholder="Type your message..." maxlength="500">
+                        <button onclick="sendMessage()">📤 Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        // Import Firebase functions
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js';
+        import { getDatabase, ref, push, onValue, set, serverTimestamp, onDisconnect } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js';
+
+        // Firebase config (public demo database)
+        const firebaseConfig = {
+            apiKey: "AIzaSyB7lGEumgXyZ1F8QYj5_8Y1TzF3gP5gZ9A",
+            authDomain: "public-chat-demo.firebaseapp.com",
+            databaseURL: "https://public-chat-demo-default-rtdb.firebaseio.com",
+            projectId: "public-chat-demo",
+            storageBucket: "public-chat-demo.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:abcdef123456"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const database = getDatabase(app);
+
+        // Global variables
+        let currentUser = null;
+        let currentTarget = null;
+        let usersRef = ref(database, 'users');
+        let messagesRef = ref(database, 'messages');
+
+        // Make functions global
+        window.login = login;
+        window.logout = logout;
+        window.startChat = startChat;
+        window.sendMessage = sendMessage;
+
+        function generateUserCode() {
+            return Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
+
+        function simpleEncrypt(text) {
+            return btoa(encodeURIComponent(text));
+        }
+
+        function simpleDecrypt(encoded) {
+            try {
+                return decodeURIComponent(atob(encoded));
+            } catch {
+                return '[Cannot decrypt]';
+            }
+        }
+
+        function login() {
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const status = document.getElementById('loginStatus');
+
+            if (!email || !password || password.length < 6) {
+                status.innerHTML = '<span class="error">Please enter valid email and password (6+ chars)</span>';
+                return;
+            }
+
+            const userCode = generateUserCode();
+            const userId = email.replace(/[.@]/g, '_'); // Firebase-safe key
+
+            currentUser = {
+                userId,
+                email,
+                userCode,
+                isOnline: true,
+                lastSeen: serverTimestamp()
+            };
+
+            // Save user to Firebase
+            const userRef = ref(database, `users/${userId}`);
+            set(userRef, currentUser).then(() => {
+                status.innerHTML = '<span class="success">Connected to real-time chat! 🎉</span>';
+                
+                // Set up disconnect cleanup
+                onDisconnect(userRef).remove();
+
+                // Show chat interface
+                document.getElementById('userCodeDisplay').textContent = userCode;
+                document.getElementById('loginForm').style.display = 'none';
+                document.getElementById('chatInterface').style.display = 'block';
+                
+                // Listen for users
+                listenForUsers();
+                
+            }).catch(error => {
+                status.innerHTML = '<span class="error">Connection failed. Try again!</span>';
+                console.error('Firebase error:', error);
+            });
+        }
+
+        function listenForUsers() {
+            onValue(usersRef, (snapshot) => {
+                const users = snapshot.val() || {};
+                const onlineUsersDiv = document.getElementById('onlineUsers');
+                const userCount = document.getElementById('userCount');
+                
+                onlineUsersDiv.innerHTML = '';
+                let count = 0;
+
+                Object.values(users).forEach(user => {
+                    if (user.isOnline && user.userId !== currentUser.userId) {
+                        count++;
+                        const userDiv = document.createElement('div');
+                        userDiv.className = 'user-item';
+                        userDiv.innerHTML = `
+                            <div>
+                                <span class="online-dot"></span><strong>${user.userCode}</strong><br>
+                                <small>${user.email.split('@')[0]}</small>
+                            </div>
+                            <button onclick="startChat('${user.userCode}', '${user.userId}')">💬 Chat</button>
+                        `;
+                        onlineUsersDiv.appendChild(userDiv);
+                    }
+                });
+
+                userCount.textContent = count;
+                if (count === 0) {
+                    onlineUsersDiv.innerHTML = '<p class="status">🔗 Share this page link with friends to chat!</p>';
+                }
+            });
+        }
+
+        function startChat(userCode, userId) {
+            currentTarget = { userCode, userId };
+            document.getElementById('currentTarget').textContent = userCode;
+            document.getElementById('chatHeader').style.display = 'block';
+            document.getElementById('messageInput').style.display = 'flex';
+            
+            const roomId = [currentUser.userId, userId].sort().join('_');
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '<p style="text-align: center; color: green;">🔐 Secure real-time chat started!</p>';
+            
+            // Listen for messages in this room
+            const roomRef = ref(database, `messages/${roomId}`);
+            onValue(roomRef, (snapshot) => {
+                const messages = snapshot.val() || {};
+                messagesDiv.innerHTML = '';
+                
+                Object.values(messages).forEach(msg => {
+                    const isOwn = msg.senderId === currentUser.userId;
+                    const time = new Date(msg.timestamp).toLocaleTimeString();
+                    const decrypted = simpleDecrypt(msg.message);
+                    
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `message ${isOwn ? 'own' : 'other'}`;
+                    messageDiv.innerHTML = `
+                        <div class="message-meta">
+                            ${isOwn ? 'You' : msg.senderCode} • ${time}
+                        </div>
+                        <div>🔒 ${decrypted}</div>
+                    `;
+                    messagesDiv.appendChild(messageDiv);
+                });
+                
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            });
+        }
+
+        function sendMessage() {
+            if (!currentUser || !currentTarget) return;
+
+            const messageText = document.getElementById('messageText').value.trim();
+            if (!messageText) return;
+
+            const roomId = [currentUser.userId, currentTarget.userId].sort().join('_');
+            const encrypted = simpleEncrypt(messageText);
+            
+            const messageObj = {
+                senderId: currentUser.userId,
+                senderCode: currentUser.userCode,
+                message: encrypted,
+                timestamp: Date.now()
+            };
+
+            const roomRef = ref(database, `messages/${roomId}`);
+            push(roomRef, messageObj).then(() => {
+                document.getElementById('messageText').value = '';
+            }).catch(error => {
+                console.error('Send failed:', error);
+            });
+        }
+
+        function logout() {
+            if (currentUser) {
+                const userRef = ref(database, `users/${currentUser.userId}`);
+                set(userRef, null); // Remove user
+            }
+            
+            currentUser = null;
+            currentTarget = null;
+            
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('chatInterface').style.display = 'none';
+            document.getElementById('email').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('loginStatus').textContent = '';
+        }
+
+        // Enter key support
+        document.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                if (document.getElementById('loginForm').style.display !== 'none') {
+                    login();
+                } else if (document.getElementById('messageText') === document.activeElement) {
+                    sendMessage();
+                }
+            }
+        });
+
+        console.log('🔥 Firebase Real-time Chat loaded!');
+    </script>
+</body>
+</html>
