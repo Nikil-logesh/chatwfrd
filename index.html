@@ -3,14 +3,355 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Chat - Redirecting...</title>
-    <script>
-        // Redirect to the chat interface
-        window.location.href = '/public/vercel-chat.html';
-    </script>
+    <title>Secure Chat - Vercel Compatible</title>
+    <link rel="stylesheet" href="public/style.css">
 </head>
 <body>
-    <p>Redirecting to Secure Chat...</p>
-    <a href="/public/vercel-chat.html">Click here if not redirected automatically</a>
+    <div class="container">
+        <!-- Login Form -->
+        <div id="loginForm" class="form-container">
+            <h1>🔐 Secure Chat</h1>
+            <p style="color: #666; margin-bottom: 20px;">Secure end-to-end encrypted chat</p>
+            <form id="loginFormElement">
+                <input type="email" id="email" placeholder="Email" required>
+                <input type="password" id="password" placeholder="Password (min 6 chars)" required minlength="6">
+                <button type="submit">Login / Register</button>
+            </form>
+            <div id="loginStatus"></div>
+        </div>
+
+        <!-- Chat Interface -->
+        <div id="chatInterface" style="display: none;">
+            <div class="chat-header">
+                <h2>Welcome, <span id="userCodeDisplay"></span>!</h2>
+                <button id="logoutBtn">Logout</button>
+            </div>
+
+            <div class="chat-layout">
+                <!-- Online Users -->
+                <div class="sidebar">
+                    <h3>Online Users</h3>
+                    <div id="onlineUsers"></div>
+                    <button id="refreshUsers">Refresh</button>
+                </div>
+
+                <!-- Chat Area -->
+                <div class="chat-area">
+                    <div id="chatHeader" style="display: none;">
+                        <h3>Chat with <span id="currentTarget"></span></h3>
+                        <div id="encryptionStatus">🔒 Encryption: Ready</div>
+                    </div>
+                    
+                    <div id="messages"></div>
+                    
+                    <div id="messageInput" style="display: none;">
+                        <input type="text" id="messageText" placeholder="Type your message..." maxlength="500">
+                        <button id="sendMessage">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Permission Dialog -->
+    <div id="permissionDialog" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Chat Request</h3>
+            <p id="permissionMessage"></p>
+            <button id="approveChat">Approve</button>
+            <button id="denyChat">Deny</button>
+        </div>
+    </div>
+
+    <script src="public/encryption.js"></script>
+    <script>
+        // Global variables
+        let sessionId = null;
+        let userCode = null;
+        let currentTargetUser = null;
+        let lastMessageId = null;
+        let messageCheckInterval = null;
+        let onlineUsersInterval = null;
+        let encryptionReady = false;
+
+        // Initialize encryption
+        const encryption = new ChatEncryption();
+
+        // DOM elements
+        const loginForm = document.getElementById('loginForm');
+        const chatInterface = document.getElementById('chatInterface');
+        const loginStatus = document.getElementById('loginStatus');
+        const userCodeDisplay = document.getElementById('userCodeDisplay');
+        const onlineUsersDiv = document.getElementById('onlineUsers');
+        const messagesDiv = document.getElementById('messages');
+        const messageText = document.getElementById('messageText');
+
+        // Event listeners
+        document.getElementById('loginFormElement').addEventListener('submit', handleLogin);
+        document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+        document.getElementById('refreshUsers').addEventListener('click', loadOnlineUsers);
+        document.getElementById('sendMessage').addEventListener('click', sendMessage);
+        document.getElementById('messageText').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // API helper function
+        async function apiCall(endpoint, data = null, method = 'GET') {
+            const url = `/api/chat?action=${endpoint}`;
+            const config = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            };
+
+            if (data && method === 'POST') {
+                config.body = JSON.stringify(data);
+            } else if (data && method === 'GET') {
+                const params = new URLSearchParams(data);
+                return fetch(`${url}&${params}`, config);
+            }
+
+            return fetch(url, config);
+        }
+
+        // Login handler
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            loginStatus.textContent = 'Logging in...';
+            loginStatus.style.color = '#007bff';
+
+            try {
+                const response = await apiCall('login', { email, password }, 'POST');
+                const result = await response.json();
+
+                if (result.success) {
+                    sessionId = result.sessionId;
+                    userCode = result.userCode;
+                    userCodeDisplay.textContent = userCode;
+                    
+                    // Initialize encryption
+                    await encryption.initialize();
+                    encryptionReady = true;
+                    
+                    showChat();
+                    loadOnlineUsers();
+                    startPeriodicUpdates();
+                    
+                    loginStatus.textContent = 'Login successful!';
+                    loginStatus.style.color = 'green';
+                } else {
+                    loginStatus.textContent = result.error || 'Login failed';
+                    loginStatus.style.color = 'red';
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                loginStatus.textContent = 'Connection error. Please try again.';
+                loginStatus.style.color = 'red';
+            }
+        }
+
+        // Show chat interface
+        function showChat() {
+            loginForm.style.display = 'none';
+            chatInterface.style.display = 'block';
+            messagesDiv.innerHTML = '<p style="text-align: center; color: #666;">Select a user to start chatting</p>';
+        }
+
+        // Load online users
+        async function loadOnlineUsers() {
+            if (!sessionId) return;
+
+            try {
+                const response = await apiCall('getOnlineUsers', { sessionId });
+                const result = await response.json();
+
+                if (result.onlineUsers) {
+                    onlineUsersDiv.innerHTML = '';
+                    if (result.onlineUsers.length === 0) {
+                        onlineUsersDiv.innerHTML = '<p style="color: #666; font-size: 14px;">No other users online</p>';
+                    } else {
+                        result.onlineUsers.forEach(user => {
+                            const userDiv = document.createElement('div');
+                            userDiv.className = 'user-item';
+                            userDiv.innerHTML = `
+                                <div class="user-info">
+                                    <strong>${user.userCode}</strong>
+                                    <small>${user.email}</small>
+                                </div>
+                                <button onclick="startChat('${user.userCode}')">Chat</button>
+                            `;
+                            onlineUsersDiv.appendChild(userDiv);
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading users:', error);
+                showNotification('Failed to load online users', 'error');
+            }
+        }
+
+        // Start chat with user
+        async function startChat(targetUserCode) {
+            currentTargetUser = targetUserCode;
+            lastMessageId = null;
+            
+            document.getElementById('currentTarget').textContent = targetUserCode;
+            document.getElementById('chatHeader').style.display = 'block';
+            document.getElementById('messageInput').style.display = 'flex';
+            
+            messagesDiv.innerHTML = '<p style="text-align: center; color: green;">🔒 Chat started with end-to-end encryption!</p>';
+            
+            // Load existing messages
+            loadMessages();
+        }
+
+        // Load messages
+        async function loadMessages() {
+            if (!sessionId || !currentTargetUser) return;
+
+            try {
+                const params = { sessionId, targetUser: currentTargetUser };
+                if (lastMessageId) params.lastMessageId = lastMessageId;
+
+                const response = await apiCall('getMessages', params);
+                const result = await response.json();
+
+                if (result.messages && result.messages.length > 0) {
+                    result.messages.forEach(message => {
+                        addMessageToChat(message);
+                        lastMessageId = message.id;
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading messages:', error);
+            }
+        }
+
+        // Send message
+        async function sendMessage() {
+            if (!sessionId || !currentTargetUser) return;
+
+            const message = messageText.value.trim();
+            if (!message) return;
+
+            try {
+                let finalMessage = message;
+                let encrypted = false;
+
+                // Encrypt if encryption is ready
+                if (encryptionReady && encryption.isReady()) {
+                    try {
+                        const encryptedData = await encryption.encryptMessage(message);
+                        finalMessage = JSON.stringify(encryptedData);
+                        encrypted = true;
+                    } catch (error) {
+                        console.error('Encryption failed:', error);
+                    }
+                }
+
+                const response = await apiCall('sendMessage', {
+                    sessionId,
+                    targetUser: currentTargetUser,
+                    message: finalMessage,
+                    encrypted
+                }, 'POST');
+
+                const result = await response.json();
+                if (result.success) {
+                    messageText.value = '';
+                    // Message will be loaded in next poll
+                    setTimeout(loadMessages, 500); // Quick refresh to show sent message
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+                showNotification('Failed to send message', 'error');
+            }
+        }
+
+        // Add message to chat
+        async function addMessageToChat(message) {
+            const isOwn = message.sender === userCode;
+            const time = new Date(message.timestamp).toLocaleTimeString();
+            
+            let displayMessage = message.message;
+            let encryptionIcon = '';
+            
+            // Try to decrypt if message is encrypted
+            if (message.encrypted && encryptionReady && encryption.isReady()) {
+                try {
+                    const encryptedData = JSON.parse(message.message);
+                    displayMessage = await encryption.decryptMessage(encryptedData.encrypted, encryptedData.iv);
+                    encryptionIcon = '🔒 ';
+                } catch (error) {
+                    console.error('Decryption failed:', error);
+                    displayMessage = '[Encrypted Message - Cannot Decrypt]';
+                    encryptionIcon = '🔒❌ ';
+                }
+            } else if (message.encrypted) {
+                displayMessage = '[Encrypted Message - Keys Not Ready]';
+                encryptionIcon = '🔒⏳ ';
+            }
+            
+            const messageHTML = `
+                <div style="margin: 10px 0; padding: 10px; border-radius: 10px; max-width: 70%; ${isOwn ? 'background: #007bff; color: white; margin-left: auto; text-align: right;' : 'background: #f1f1f1; color: black;'}">
+                    <div style="font-size: 12px; opacity: 0.8; margin-bottom: 5px;">
+                        ${isOwn ? 'You' : message.sender} • ${time}
+                    </div>
+                    <div>${encryptionIcon}${displayMessage}</div>
+                </div>
+            `;
+            
+            messagesDiv.insertAdjacentHTML('beforeend', messageHTML);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // Start periodic updates
+        function startPeriodicUpdates() {
+            // Check for new messages every 2 seconds
+            messageCheckInterval = setInterval(() => {
+                if (currentTargetUser) {
+                    loadMessages();
+                }
+            }, 2000);
+
+            // Refresh online users every 10 seconds
+            onlineUsersInterval = setInterval(loadOnlineUsers, 10000);
+        }
+
+        // Logout
+        function handleLogout() {
+            sessionId = null;
+            userCode = null;
+            currentTargetUser = null;
+            lastMessageId = null;
+            
+            if (messageCheckInterval) clearInterval(messageCheckInterval);
+            if (onlineUsersInterval) clearInterval(onlineUsersInterval);
+            
+            loginForm.style.display = 'block';
+            chatInterface.style.display = 'none';
+            document.getElementById('chatHeader').style.display = 'none';
+            document.getElementById('messageInput').style.display = 'none';
+            document.getElementById('email').value = '';
+            document.getElementById('password').value = '';
+            loginStatus.textContent = '';
+        }
+
+        // Notification system
+        function showNotification(message, type = 'info') {
+            console.log(`${type.toUpperCase()}: ${message}`);
+            // You can enhance this with a proper notification UI
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Secure Chat initialized for Vercel deployment - HTTP API Version');
+            loginStatus.innerHTML = '<p style="color: #666; font-size: 14px;">Ready to login. No Socket.io required!</p>';
+        });
+    </script>
 </body>
 </html>
