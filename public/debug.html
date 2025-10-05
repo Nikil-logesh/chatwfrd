@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Test - Debug Mode</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+        .step { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .step h3 { color: #333; margin-top: 0; }
+        .success { background: #d4edda; border-color: #c3e6cb; }
+        .error { background: #f8d7da; border-color: #f5c6cb; }
+        .info { background: #d1ecf1; border-color: #bee5eb; }
+        button { padding: 10px 15px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        input { padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 3px; }
+        #log { background: #000; color: #0f0; padding: 10px; border-radius: 5px; height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Chat Debug Tool</h1>
+        
+        <div class="step info">
+            <h3>Step 1: Connection Test</h3>
+            <p>Testing connection to server...</p>
+            <div id="connectionStatus">Checking...</div>
+        </div>
+        
+        <div class="step">
+            <h3>Step 2: Login Test</h3>
+            <input type="email" id="testEmail" placeholder="test@example.com" value="test@example.com">
+            <input type="password" id="testPassword" placeholder="password" value="password123">
+            <button onclick="testLogin()">Test Login</button>
+            <div id="loginStatus"></div>
+        </div>
+        
+        <div class="step">
+            <h3>Step 3: Socket Test</h3>
+            <button onclick="testSocket()">Test WebSocket Connection</button>
+            <div id="socketStatus"></div>
+        </div>
+        
+        <div class="step">
+            <h3>Step 4: User List Test</h3>
+            <button onclick="testUserList()">Get Online Users</button>
+            <div id="userListStatus"></div>
+        </div>
+        
+        <div class="step">
+            <h3>Debug Log</h3>
+            <div id="log"></div>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+        
+        <div class="step info">
+            <h3>Quick Actions</h3>
+            <button onclick="window.open('/', '_blank')">Open Login Page</button>
+            <button onclick="window.open('/chat', '_blank')">Open Chat Page</button>
+            <button onclick="location.reload()">Refresh This Page</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${time}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        // Test 1: Connection
+        log('Starting connection test...');
+        fetch('/users')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('connectionStatus').innerHTML = '<span style="color: green;">✅ Server is running and accessible</span>';
+                log('✅ HTTP connection successful');
+            })
+            .catch(error => {
+                document.getElementById('connectionStatus').innerHTML = '<span style="color: red;">❌ Cannot connect to server</span>';
+                log('❌ HTTP connection failed: ' + error.message);
+            });
+        
+        // Test 2: Login
+        async function testLogin() {
+            const email = document.getElementById('testEmail').value;
+            const password = document.getElementById('testPassword').value;
+            
+            log(`Testing login with ${email}...`);
+            
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('loginStatus').innerHTML = `<span style="color: green;">✅ Login successful! User code: ${data.userCode}</span>`;
+                    log(`✅ Login successful - Code: ${data.userCode}`);
+                    localStorage.setItem('testUserCode', data.userCode);
+                } else {
+                    document.getElementById('loginStatus').innerHTML = `<span style="color: red;">❌ Login failed: ${data.error}</span>`;
+                    log(`❌ Login failed: ${data.error}`);
+                }
+            } catch (error) {
+                document.getElementById('loginStatus').innerHTML = `<span style="color: red;">❌ Login error: ${error.message}</span>`;
+                log(`❌ Login error: ${error.message}`);
+            }
+        }
+        
+        // Test 3: Socket
+        function testSocket() {
+            log('Testing WebSocket connection...');
+            
+            const socket = io();
+            
+            socket.on('connect', () => {
+                document.getElementById('socketStatus').innerHTML = '<span style="color: green;">✅ WebSocket connected</span>';
+                log('✅ WebSocket connected with ID: ' + socket.id);
+                
+                const userCode = localStorage.getItem('testUserCode');
+                if (userCode) {
+                    log(`Joining with user code: ${userCode}`);
+                    socket.emit('join', userCode);
+                }
+            });
+            
+            socket.on('joined', (data) => {
+                log(`✅ Successfully joined with code: ${data.userCode}`);
+            });
+            
+            socket.on('disconnect', () => {
+                log('❌ WebSocket disconnected');
+            });
+            
+            socket.on('connect_error', (error) => {
+                document.getElementById('socketStatus').innerHTML = '<span style="color: red;">❌ WebSocket connection failed</span>';
+                log('❌ WebSocket error: ' + error.message);
+            });
+        }
+        
+        // Test 4: User List
+        async function testUserList() {
+            log('Testing user list retrieval...');
+            
+            try {
+                const response = await fetch('/users');
+                const users = await response.json();
+                
+                document.getElementById('userListStatus').innerHTML = `<span style="color: green;">✅ Found ${users.length} users</span>`;
+                log(`✅ User list retrieved: ${JSON.stringify(users)}`);
+                
+                if (users.length > 0) {
+                    log('Online users:');
+                    users.forEach(user => {
+                        log(`  - ${user.userCode} (${user.email})`);
+                    });
+                }
+            } catch (error) {
+                document.getElementById('userListStatus').innerHTML = `<span style="color: red;">❌ Cannot get user list</span>`;
+                log(`❌ User list error: ${error.message}`);
+            }
+        }
+        
+        log('Debug tool loaded. Click buttons above to test each component.');
+    </script>
+</body>
+</html>

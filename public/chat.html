@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Website - Chat Room</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="chat-container">
+        <!-- Header -->
+        <div class="chat-header">
+            <div class="user-info">
+                <h2>Welcome!</h2>
+                <p>Your Code: <span id="userCode" class="user-code"></span></p>
+                <p>Share this code with others to chat</p>
+            </div>
+            <button id="logoutBtn" class="logout-btn">Logout</button>
+        </div>
+        
+        <!-- Main Chat Area -->
+        <div class="chat-main">
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <div class="start-chat">
+                    <h3>🔐 Request Secure Chat</h3>
+                    <div class="input-group">
+                        <input type="text" id="targetUserCode" placeholder="Enter user code" maxlength="8">
+                        <button id="startChatBtn">Send Request</button>
+                    </div>
+                    <div id="requestStatus" style="font-size: 12px; margin-top: 10px; color: #666;"></div>
+                </div>
+                
+                <div class="online-users">
+                    <h3>Online Users</h3>
+                    <div id="usersList" class="users-list">
+                        <p>Loading...</p>
+                    </div>
+                    <button id="refreshUsersBtn" class="refresh-btn">Refresh</button>
+                </div>
+            </div>
+            
+            <!-- Chat Window -->
+            <div class="chat-window">
+                <div id="chatArea" class="chat-area">
+                    <div class="welcome-message">
+                        <h3>Welcome to Chat!</h3>
+                        <p>Enter a user code on the left to start chatting</p>
+                        <p>Your code: <strong id="userCodeDisplay"></strong></p>
+                    </div>
+                </div>
+                
+                <div id="messageInput" class="message-input" style="display: none;">
+                    <input type="text" id="messageText" placeholder="Type your message...">
+                    <button id="sendBtn">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="encryption.js"></script>
+    <script>
+        // Check if user is logged in
+        const userCode = localStorage.getItem('userCode');
+        const userEmail = localStorage.getItem('userEmail');
+        
+        if (!userCode) {
+            window.location.href = '/';
+        }
+        
+        // Initialize socket connection
+        const socket = io();
+        let currentRoom = null;
+        let currentTargetUser = null;
+        
+        // Initialize encryption
+        const encryption = new ChatEncryption();
+        let encryptionReady = false;
+        
+        // DOM elements
+        const userCodeSpan = document.getElementById('userCode');
+        const userCodeDisplay = document.getElementById('userCodeDisplay');
+        const targetUserCodeInput = document.getElementById('targetUserCode');
+        const startChatBtn = document.getElementById('startChatBtn');
+        const chatArea = document.getElementById('chatArea');
+        const messageInput = document.getElementById('messageInput');
+        const messageText = document.getElementById('messageText');
+        const sendBtn = document.getElementById('sendBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const usersList = document.getElementById('usersList');
+        const refreshUsersBtn = document.getElementById('refreshUsersBtn');
+        
+        // Set user code display
+        userCodeSpan.textContent = userCode;
+        userCodeDisplay.textContent = userCode;
+        
+        // Join socket with user code
+        socket.emit('join', userCode);
+        
+        // Socket event listeners
+        socket.on('joined', (data) => {
+            console.log('Joined with code:', data.userCode);
+            loadOnlineUsers();
+            
+            // Generate encryption keys
+            initializeEncryption();
+            
+            // Show success message
+            showNotification('Connected successfully! Your code: ' + userCode, 'success');
+        });
+        
+        socket.on('chatStarted', (data) => {
+            console.log('Chat started:', data);
+            currentRoom = data.roomId;
+            currentTargetUser = data.targetUser;
+            
+            // Create simple chat interface
+            chatArea.innerHTML = `
+                <div class="chat-header-info">
+                    <h3>🔒 Encrypted Chat with: ${data.targetUser}</h3>
+                    <div id="encryptionStatus" style="font-size: 12px; color: #666;">
+                        🔑 Setting up encryption...
+                    </div>
+                </div>
+                <div id="messages" style="border: 2px solid #007bff; min-height: 300px; max-height: 400px; overflow-y: auto; padding: 15px; background: white; margin: 10px 0; border-radius: 8px;">
+                    <p style="color: #666; text-align: center;">🔒 Encrypted chat started! Exchanging keys...</p>
+                </div>
+            `;
+            
+            // Show message input
+            messageInput.style.display = 'flex';
+            
+            // Start key exchange
+            startKeyExchange();
+            
+            // Load previous messages (they will be encrypted)
+            if (data.messages && data.messages.length > 0) {
+                console.log('Loading', data.messages.length, 'previous messages');
+                data.messages.forEach(msg => {
+                    addMessageToChat(msg);
+                });
+            }
+            
+            showNotification('🔒 Encrypted chat started with ' + data.targetUser, 'success');
+        });
+        
+        socket.on('newMessage', (message) => {
+            console.log('New message received:', message);
+            addMessageToChat(message);
+        });
+        
+        // Handle incoming chat requests
+        socket.on('chatRequest', (data) => {
+            console.log('Received chat request:', data);
+            showChatRequestDialog(data);
+        });
+        
+        socket.on('chatRequestSent', (data) => {
+            console.log('Chat request sent:', data);
+            document.getElementById('requestStatus').textContent = data.message;
+            showNotification('Chat request sent to ' + data.targetUser, 'info');
+        });
+        
+        socket.on('chatRequestDenied', (data) => {
+            console.log('Chat request denied:', data);
+            document.getElementById('requestStatus').textContent = '';
+            showNotification(data.message, 'error');
+        });
+        
+        socket.on('chatRequestExpired', (data) => {
+            console.log('Chat request expired:', data);
+            document.getElementById('requestStatus').textContent = '';
+            if (data.targetUser) {
+                showNotification('Chat request to ' + data.targetUser + ' expired', 'error');
+            } else {
+                showNotification('Chat request from ' + data.from + ' expired', 'info');
+            }
+        });
+        
+        socket.on('userBlocked', (data) => {
+            showNotification('User ' + data.userCode + ' has been blocked', 'success');
+            loadOnlineUsers();
+        });
+            console.log('Received public key from:', data.from);
+            if (data.from === currentTargetUser) {
+                const success = await encryption.importOtherPublicKey(data.publicKey);
+                if (success) {
+                    encryptionReady = true;
+                    updateEncryptionStatus('🔒 End-to-end encryption active');
+                    
+                    // Clear the placeholder and show encryption ready message
+                    const messagesDiv = document.getElementById('messages');
+                    if (messagesDiv && messagesDiv.innerHTML.includes('Exchanging keys')) {
+                        messagesDiv.innerHTML = '<p style="color: green; text-align: center;">🔒 End-to-end encryption is now active! Messages are secure.</p>';
+                    }
+                } else {
+                    updateEncryptionStatus('❌ Encryption setup failed');
+                }
+            }
+        });
+        
+        socket.on('error', (errorMessage) => {
+            console.error('Server error:', errorMessage);
+            showNotification(errorMessage, 'error');
+        });
+        
+        // Simple function to add messages to chat
+        async function addMessageToChat(message) {
+            console.log('Adding message to chat:', message);
+            
+            const messagesDiv = document.getElementById('messages');
+            if (!messagesDiv) {
+                console.error('Messages div not found!');
+                return;
+            }
+            
+            // Remove the placeholder text if it exists
+            if (messagesDiv.innerHTML.includes('Chat started!') || messagesDiv.innerHTML.includes('Exchanging keys') || messagesDiv.innerHTML.includes('encryption is now active')) {
+                messagesDiv.innerHTML = '';
+            }
+            
+            const isOwn = message.sender === userCode;
+            const time = new Date(message.timestamp).toLocaleTimeString();
+            
+            let displayMessage = message.message;
+            let encryptionIcon = '';
+            
+            // Try to decrypt if message is encrypted
+            if (message.encrypted && encryptionReady && encryption.isReady()) {
+                try {
+                    const encryptedData = JSON.parse(message.message);
+                    displayMessage = await encryption.decryptMessage(encryptedData.encrypted, encryptedData.iv);
+                    encryptionIcon = '🔒 ';
+                    console.log('Message decrypted successfully');
+                } catch (error) {
+                    console.error('Decryption failed:', error);
+                    displayMessage = '[Encrypted Message - Cannot Decrypt]';
+                    encryptionIcon = '🔒❌ ';
+                }
+            } else if (message.encrypted) {
+                displayMessage = '[Encrypted Message - Keys Not Ready]';
+                encryptionIcon = '🔒⏳ ';
+            }
+            
+            const messageHTML = `
+                <div style="margin: 10px 0; padding: 10px; border-radius: 10px; max-width: 70%; ${isOwn ? 'background: #007bff; color: white; margin-left: auto; text-align: right;' : 'background: #f1f1f1; color: black;'}">
+                    <div style="font-size: 12px; opacity: 0.8; margin-bottom: 5px;">
+                        ${isOwn ? 'You' : message.sender} • ${time}
+                    </div>
+                    <div style="font-size: 14px;">
+                        ${encryptionIcon}${displayMessage}
+                    </div>
+                </div>
+            `;
+            
+            messagesDiv.innerHTML += messageHTML;
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            
+            console.log('Message added successfully');
+        }
+        
+        // Initialize encryption for this user
+        async function initializeEncryption() {
+            try {
+                await encryption.generateKeyPair();
+                console.log('Encryption keys generated');
+            } catch (error) {
+                console.error('Failed to generate encryption keys:', error);
+            }
+        }
+        
+        // Start key exchange with the other user
+        async function startKeyExchange() {
+            try {
+                const publicKey = await encryption.exportPublicKey();
+                socket.emit('exchangeKeys', {
+                    roomId: currentRoom,
+                    targetUser: currentTargetUser,
+                    publicKey: publicKey
+                });
+                console.log('Public key sent for exchange');
+            } catch (error) {
+                console.error('Key exchange failed:', error);
+                updateEncryptionStatus('❌ Key exchange failed');
+            }
+        }
+        
+        // Update encryption status display
+        function updateEncryptionStatus(status) {
+            const statusDiv = document.getElementById('encryptionStatus');
+            if (statusDiv) {
+                statusDiv.textContent = status;
+            }
+        }
+        
+        // Event listeners
+        startChatBtn.addEventListener('click', () => {
+            const targetCode = targetUserCodeInput.value.trim().toUpperCase();
+            console.log('Sending chat request to:', targetCode, 'Current user:', userCode);
+            
+            if (!targetCode) {
+                showNotification('Please enter a user code', 'error');
+                return;
+            }
+            
+            if (targetCode === userCode) {
+                showNotification('You cannot chat with yourself!', 'error');
+                return;
+            }
+            
+            if (targetCode.length !== 8) {
+                showNotification('User code must be 8 characters long', 'error');
+                return;
+            }
+            
+            socket.emit('sendChatRequest', targetCode);
+            targetUserCodeInput.value = '';
+            document.getElementById('requestStatus').textContent = 'Sending request...';
+        });
+        
+        sendBtn.addEventListener('click', sendMessage);
+        messageText.addEventListener('keypress', async (e) => {
+            if (e.key === 'Enter') {
+                await sendMessage();
+            }
+        });
+        
+        logoutBtn.addEventListener('click', () => {
+            localStorage.removeItem('userCode');
+            localStorage.removeItem('userEmail');
+            window.location.href = '/';
+        });
+        
+        refreshUsersBtn.addEventListener('click', loadOnlineUsers);
+        
+        // Functions
+        async function sendMessage() {
+            const message = messageText.value.trim();
+            console.log('Attempting to send message:', message, 'Room:', currentRoom);
+            
+            if (!message) {
+                showNotification('Please enter a message', 'error');
+                return;
+            }
+            
+            if (!currentRoom) {
+                showNotification('No active chat room. Please start a chat first.', 'error');
+                return;
+            }
+            
+            let messageToSend = message;
+            let isEncrypted = false;
+            
+            // Encrypt message if encryption is ready
+            if (encryptionReady && encryption.isReady()) {
+                try {
+                    const encrypted = await encryption.encryptMessage(message);
+                    messageToSend = JSON.stringify(encrypted);
+                    isEncrypted = true;
+                    console.log('Message encrypted');
+                } catch (error) {
+                    console.error('Encryption failed:', error);
+                    showNotification('Encryption failed, sending unencrypted', 'error');
+                }
+            }
+            
+            console.log('Emitting sendMessage event');
+            socket.emit('sendMessage', {
+                roomId: currentRoom,
+                message: messageToSend,
+                encrypted: isEncrypted
+            });
+            
+            messageText.value = '';
+            messageText.focus();
+        }
+        
+        // Add message sent confirmation
+        socket.on('messageSent', (data) => {
+            console.log('Message sent confirmation:', data);
+            if (!data.success) {
+                showNotification('Failed to send message', 'error');
+            }
+        });
+        
+        function displayMessage(message) {
+            // Use the new simplified function
+            addMessageToChat(message);
+        }
+        
+        function scrollToBottom() {
+            const messagesDiv = document.getElementById('messages');
+            if (messagesDiv) {
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        async function loadOnlineUsers() {
+            try {
+                const response = await fetch('/users');
+                const users = await response.json();
+                
+                usersList.innerHTML = '';
+                
+                if (users.length === 0) {
+                    usersList.innerHTML = '<p>No other users online</p>';
+                } else {
+                    users.forEach(user => {
+                        if (user.userCode !== userCode) {
+                            const userDiv = document.createElement('div');
+                            userDiv.className = 'user-item';
+                            userDiv.innerHTML = `
+                                <div>
+                                    <strong>${user.userCode}</strong>
+                                    <br><small>${user.email}</small>
+                                </div>
+                                <div>
+                                    <button onclick="sendChatRequest('${user.userCode}')" class="chat-btn">🔐 Request</button>
+                                    <button onclick="blockUser('${user.userCode}')" class="block-btn" style="background: #dc3545; font-size: 10px;">Block</button>
+                                </div>
+                            `;
+                            usersList.appendChild(userDiv);
+                        }
+                    });
+                }
+            } catch (error) {
+                usersList.innerHTML = '<p>Error loading users</p>';
+            }
+        }
+        
+        function startChatWith(targetCode) {
+            targetUserCodeInput.value = targetCode;
+            startChatBtn.click();
+        }
+        
+        function sendChatRequest(targetCode) {
+            targetUserCodeInput.value = targetCode;
+            startChatBtn.click();
+        }
+        
+        function blockUser(targetCode) {
+            if (confirm(`Are you sure you want to block user ${targetCode}?`)) {
+                socket.emit('blockUser', targetCode);
+            }
+        }
+        
+        function showChatRequestDialog(data) {
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.5);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 10000;
+            `;
+            
+            dialog.innerHTML = `
+                <div style="background: white; padding: 30px; border-radius: 15px; max-width: 400px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
+                    <h3 style="margin-bottom: 20px; color: #333;">🔐 Encrypted Chat Request</h3>
+                    <p style="margin-bottom: 20px; color: #666;">${data.message}</p>
+                    <p style="margin-bottom: 30px; font-size: 14px; color: #888;">This will start an end-to-end encrypted conversation.</p>
+                    <div>
+                        <button onclick="respondToRequest('${data.requestId}', true)" style="background: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 8px; margin: 0 10px; cursor: pointer;">
+                            ✅ Accept
+                        </button>
+                        <button onclick="respondToRequest('${data.requestId}', false)" style="background: #dc3545; color: white; border: none; padding: 12px 20px; border-radius: 8px; margin: 0 10px; cursor: pointer;">
+                            ❌ Decline
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(dialog);
+            
+            // Auto-dismiss after 2 minutes
+            setTimeout(() => {
+                if (dialog.parentNode) {
+                    dialog.parentNode.removeChild(dialog);
+                }
+            }, 120000);
+        }
+        
+        function respondToRequest(requestId, accepted) {
+            socket.emit('respondToChatRequest', { requestId, accepted });
+            
+            // Remove the dialog
+            const dialogs = document.querySelectorAll('div[style*="position: fixed"]');
+            dialogs.forEach(dialog => {
+                if (dialog.innerHTML.includes(requestId)) {
+                    dialog.parentNode.removeChild(dialog);
+                }
+            });
+        }
+        
+        function showNotification(message, type = 'info') {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 15px;
+                border-radius: 8px;
+                color: white;
+                font-weight: 500;
+                z-index: 1000;
+                min-width: 250px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            `;
+            
+            // Set background color based on type
+            switch(type) {
+                case 'success':
+                    notification.style.background = '#28a745';
+                    break;
+                case 'error':
+                    notification.style.background = '#dc3545';
+                    break;
+                case 'info':
+                    notification.style.background = '#17a2b8';
+                    break;
+                default:
+                    notification.style.background = '#6c757d';
+            }
+            
+            document.body.appendChild(notification);
+            
+            // Remove after 3 seconds
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 3000);
+        }
+        
+        // Add connection status indicator
+        socket.on('connect', () => {
+            console.log('Socket connected');
+            showNotification('Connected to server', 'success');
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('Socket disconnected');
+            showNotification('Disconnected from server', 'error');
+        });
+        
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            showNotification('Connection failed', 'error');
+        });
+        
+        // Load users initially
+        loadOnlineUsers();
+        
+        // Refresh users every 30 seconds
+        setInterval(loadOnlineUsers, 30000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simple Message Test</title>
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        .messages { 
+            border: 2px solid red; 
+            height: 300px; 
+            overflow-y: auto; 
+            padding: 10px; 
+            background: #f9f9f9;
+            margin: 20px 0;
+        }
+        .message { 
+            padding: 8px; 
+            margin: 5px 0; 
+            border-radius: 5px; 
+            border: 1px solid #ccc;
+        }
+        .message.own { background: #007bff; color: white; }
+        .message.other { background: #e9ecef; }
+        button { padding: 10px; margin: 5px; }
+        input { padding: 8px; width: 300px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Direct Message Display Test</h1>
+    
+    <div>
+        <input type="text" id="testMessage" placeholder="Type test message" value="Hello World!">
+        <button onclick="addTestMessage()">Add Test Message</button>
+        <button onclick="clearMessages()">Clear Messages</button>
+    </div>
+    
+    <div class="messages" id="messages">
+        <p style="color: #666;">Messages will appear here...</p>
+    </div>
+    
+    <div>
+        <h3>Login and Socket Test:</h3>
+        <input type="email" id="email" value="test@example.com">
+        <input type="password" id="password" value="password123">
+        <button onclick="testLogin()">Login</button>
+        <button onclick="connectSocket()">Connect Socket</button>
+        <div id="status">Status: Ready</div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let userCode = '';
+        let socket = null;
+        let messageCount = 0;
+        
+        function addTestMessage() {
+            const message = document.getElementById('testMessage').value || 'Test message ' + (++messageCount);
+            const messagesDiv = document.getElementById('messages');
+            
+            console.log('Adding test message:', message);
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message own';
+            messageDiv.innerHTML = `
+                <strong>Test User:</strong> ${message}
+                <small style="float: right;">${new Date().toLocaleTimeString()}</small>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            
+            document.getElementById('testMessage').value = '';
+        }
+        
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '<p style="color: #666;">Messages cleared...</p>';
+        }
+        
+        async function testLogin() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            document.getElementById('status').textContent = 'Status: Logging in...';
+            
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    userCode = data.userCode;
+                    document.getElementById('status').textContent = `Status: Logged in as ${userCode}`;
+                    console.log('Login successful:', data);
+                } else {
+                    document.getElementById('status').textContent = 'Status: Login failed - ' + data.error;
+                }
+            } catch (error) {
+                document.getElementById('status').textContent = 'Status: Login error - ' + error.message;
+            }
+        }
+        
+        function connectSocket() {
+            if (!userCode) {
+                alert('Please login first');
+                return;
+            }
+            
+            document.getElementById('status').textContent = 'Status: Connecting socket...';
+            
+            socket = io();
+            
+            socket.on('connect', () => {
+                console.log('Socket connected');
+                document.getElementById('status').textContent = 'Status: Socket connected, joining...';
+                socket.emit('join', userCode);
+            });
+            
+            socket.on('joined', (data) => {
+                console.log('Joined:', data);
+                document.getElementById('status').textContent = `Status: Connected as ${data.userCode}`;
+            });
+            
+            socket.on('newMessage', (message) => {
+                console.log('Received message:', message);
+                
+                const messagesDiv = document.getElementById('messages');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${message.sender === userCode ? 'own' : 'other'}`;
+                
+                messageDiv.innerHTML = `
+                    <strong>${message.sender === userCode ? 'You' : message.sender}:</strong> ${message.message}
+                    <small style="float: right;">${new Date(message.timestamp).toLocaleTimeString()}</small>
+                `;
+                
+                messagesDiv.appendChild(messageDiv);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            });
+            
+            socket.on('error', (error) => {
+                console.error('Socket error:', error);
+                document.getElementById('status').textContent = 'Status: Error - ' + error;
+            });
+        }
+        
+        // Test DOM ready
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('DOM ready, messages div exists:', !!document.getElementById('messages'));
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Message Test</title>
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        .user { border: 1px solid #ccc; margin: 10px; padding: 15px; border-radius: 8px; }
+        .messages { background: #f5f5f5; padding: 10px; margin: 10px 0; height: 200px; overflow-y: auto; }
+        .message { margin: 5px 0; padding: 8px; border-radius: 5px; }
+        .message.own { background: #007bff; color: white; text-align: right; }
+        .message.other { background: #e9ecef; }
+        input { width: 70%; padding: 8px; }
+        button { padding: 8px 15px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Message Testing Tool</h1>
+    
+    <!-- User 1 -->
+    <div class="user">
+        <h3>User 1</h3>
+        <div>
+            <input type="email" id="email1" value="user1@test.com" placeholder="Email">
+            <input type="password" id="password1" value="password123" placeholder="Password">
+            <button onclick="loginUser(1)">Login</button>
+        </div>
+        <div>Code: <span id="code1">-</span> | Status: <span id="status1">Not logged in</span></div>
+        <div>
+            <input type="text" id="targetCode1" placeholder="Enter other user's code" maxlength="8">
+            <button onclick="startChat(1)">Start Chat</button>
+        </div>
+        <div class="messages" id="messages1"></div>
+        <div>
+            <input type="text" id="messageInput1" placeholder="Type message..." onkeypress="if(event.key==='Enter') sendMessage(1)">
+            <button onclick="sendMessage(1)">Send</button>
+        </div>
+    </div>
+    
+    <!-- User 2 -->
+    <div class="user">
+        <h3>User 2</h3>
+        <div>
+            <input type="email" id="email2" value="user2@test.com" placeholder="Email">
+            <input type="password" id="password2" value="password456" placeholder="Password">
+            <button onclick="loginUser(2)">Login</button>
+        </div>
+        <div>Code: <span id="code2">-</span> | Status: <span id="status2">Not logged in</span></div>
+        <div>
+            <input type="text" id="targetCode2" placeholder="Enter other user's code" maxlength="8">
+            <button onclick="startChat(2)">Start Chat</button>
+        </div>
+        <div class="messages" id="messages2"></div>
+        <div>
+            <input type="text" id="messageInput2" placeholder="Type message..." onkeypress="if(event.key==='Enter') sendMessage(2)">
+            <button onclick="sendMessage(2)">Send</button>
+        </div>
+    </div>
+    
+    <div style="margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 8px;">
+        <h4>Instructions:</h4>
+        <ol>
+            <li>Click "Login" for both users</li>
+            <li>Copy User 1's code to User 2's "target code" field</li>
+            <li>Click "Start Chat" for User 2</li>
+            <li>Type messages in either user's input and press Enter or click Send</li>
+            <li>Messages should appear instantly in both windows</li>
+        </ol>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const sockets = {};
+        const userCodes = {};
+        const currentRooms = {};
+        
+        async function loginUser(userNum) {
+            const email = document.getElementById(`email${userNum}`).value;
+            const password = document.getElementById(`password${userNum}`).value;
+            
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    userCodes[userNum] = data.userCode;
+                    document.getElementById(`code${userNum}`).textContent = data.userCode;
+                    document.getElementById(`status${userNum}`).textContent = 'Logged in';
+                    
+                    // Initialize socket
+                    initSocket(userNum);
+                } else {
+                    document.getElementById(`status${userNum}`).textContent = 'Login failed: ' + data.error;
+                }
+            } catch (error) {
+                document.getElementById(`status${userNum}`).textContent = 'Error: ' + error.message;
+            }
+        }
+        
+        function initSocket(userNum) {
+            const socket = io();
+            sockets[userNum] = socket;
+            
+            socket.on('connect', () => {
+                console.log(`User ${userNum} socket connected`);
+                socket.emit('join', userCodes[userNum]);
+            });
+            
+            socket.on('joined', (data) => {
+                console.log(`User ${userNum} joined with code:`, data.userCode);
+                document.getElementById(`status${userNum}`).textContent = 'Connected';
+            });
+            
+            socket.on('chatStarted', (data) => {
+                console.log(`User ${userNum} chat started:`, data);
+                currentRooms[userNum] = data.roomId;
+                document.getElementById(`status${userNum}`).textContent = `Chatting with ${data.targetUser}`;
+                
+                // Clear and load messages
+                const messagesDiv = document.getElementById(`messages${userNum}`);
+                messagesDiv.innerHTML = '';
+                
+                if (data.messages) {
+                    data.messages.forEach(msg => displayMessage(userNum, msg));
+                }
+            });
+            
+            socket.on('newMessage', (message) => {
+                console.log(`User ${userNum} received message:`, message);
+                displayMessage(userNum, message);
+            });
+            
+            socket.on('error', (error) => {
+                console.error(`User ${userNum} error:`, error);
+                alert(`User ${userNum} Error: ${error}`);
+            });
+        }
+        
+        function startChat(userNum) {
+            const targetCode = document.getElementById(`targetCode${userNum}`).value.trim().toUpperCase();
+            if (targetCode && sockets[userNum]) {
+                console.log(`User ${userNum} starting chat with ${targetCode}`);
+                sockets[userNum].emit('startChat', targetCode);
+            }
+        }
+        
+        function sendMessage(userNum) {
+            const messageInput = document.getElementById(`messageInput${userNum}`);
+            const message = messageInput.value.trim();
+            
+            if (message && currentRooms[userNum] && sockets[userNum]) {
+                console.log(`User ${userNum} sending message:`, message, 'to room:', currentRooms[userNum]);
+                sockets[userNum].emit('sendMessage', {
+                    roomId: currentRooms[userNum],
+                    message: message
+                });
+                messageInput.value = '';
+            }
+        }
+        
+        function displayMessage(userNum, message) {
+            const messagesDiv = document.getElementById(`messages${userNum}`);
+            const messageDiv = document.createElement('div');
+            
+            const isOwn = message.sender === userCodes[userNum];
+            messageDiv.className = `message ${isOwn ? 'own' : 'other'}`;
+            
+            const time = new Date(message.timestamp).toLocaleTimeString();
+            messageDiv.innerHTML = `
+                <strong>${isOwn ? 'You' : message.sender}:</strong> ${message.message}
+                <small style="opacity: 0.7; margin-left: 10px;">${time}</small>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+    </script>
+</body>
+</html>
