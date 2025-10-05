@@ -17,7 +17,7 @@ const corsHeaders = {
     'Access-Control-Allow-Credentials': 'true'
 };
 
-export default function handler(req, res) {
+module.exports = function handler(req, res) {
     // Set CORS headers
     Object.keys(corsHeaders).forEach(key => {
         res.setHeader(key, corsHeaders[key]);
