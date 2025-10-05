@@ -182,6 +182,8 @@
             showNotification('User ' + data.userCode + ' has been blocked', 'success');
             loadOnlineUsers();
         });
+        
+        socket.on('publicKeyExchange', async (data) => {
             console.log('Received public key from:', data.from);
             if (data.from === currentTargetUser) {
                 const success = await encryption.importOtherPublicKey(data.publicKey);
